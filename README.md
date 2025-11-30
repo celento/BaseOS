@@ -1,52 +1,46 @@
 # BaseOS
 
-A simple 32-bit x86 kernel written in C and Assembly.
+A tiny 32-bit kernel I'm writing from scratch in C and Assembly. It boots into a custom VGA GUI (Mode 13h) with a few basic apps.
 
 ![BaseOS Demo](screenshots/demo.png)
 
-I started this project to learn more about low-level systems programming and how operating systems work under the hood. It's currently a work in progress but boots into a simple GUI-like menu system.
+## What is this?
 
-## Features
+I built this to understand how OS kernels work at the lowest level. It's not POSIX-compliant or anything fancy, but it handles:
+- **Booting**: A custom 16-bit bootloader that jumps to 32-bit protected mode.
+- **Graphics**: Direct VGA memory writing (320x200, 256 colors) with a custom windowing system and font rendering.
+- **Input**: PS/2 keyboard driver.
+- **Apps**: A simple menu, a "Hello World" demo, and a Settings page to change the theme.
 
-- **Bootloader**: Custom 16-bit real mode bootloader that switches to 32-bit protected mode.
-- **Kernel**: Minimal C kernel.
-- **Drivers**:
-  - VGA Text Mode (80x25) with custom window rendering.
-  - PS/2 Keyboard polling driver.
-  - Serial Port (COM1) for debugging.
-- **Interface**: Simple TUI (Text User Interface) with window management and menu navigation.
+## How to Run
 
-## Building and Running
+You'll need `qemu`, `nasm`, and a cross-compiler (like `x86_64-elf-gcc`).
 
-You'll need a cross-compiler (`i686-elf-gcc` or `x86_64-elf-gcc`) and `nasm`. I use QEMU for emulation.
-
-### Prerequisites (macOS)
-
+On macOS:
 ```bash
 brew install x86_64-elf-gcc nasm qemu
 ```
 
-### Build & Run
-
-To build the floppy image and run it in QEMU:
-
+Then just run:
 ```bash
 make run
 ```
 
-To just build the image:
+This will compile everything, build the floppy image, and launch QEMU.
 
-```bash
-make
-```
+## Project Layout
 
-## Project Structure
+- `boot.asm`: The bootloader.
+- `kernel.c`: The entire kernel (graphics, logic, drivers).
+- `font.h`: Bitmap font definitions.
+- `kernel_entry.asm`: Assembly stub to jump into C code.
 
-- `boot.asm`: The bootloader. Loads the kernel from disk and jumps to protected mode.
-- `kernel.c`: The main kernel source. Handles VGA, IO, and the UI logic.
-- `kernel_entry.asm`: Assembly stub that calls the C `kmain` function.
-- `Makefile`: Build script.
+## Future Plans
+
+- [ ] Mouse support
+- [ ] A simple file system (maybe FAT12?)
+- [ ] Text editor
 
 ## License
 
-MIT. Feel free to use this code for your own OSDev experiments!
+MIT. Use this however you want!
