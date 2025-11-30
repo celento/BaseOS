@@ -1,56 +1,44 @@
 /*
  * BaseOS Kernel
- * Main entry point and hardware abstraction layer.
- *
- * This is a simple kernel implementation for my personal OS project.
- * It handles basic VGA text mode rendering, keyboard input, and a simple GUI.
+ * VGA Mode 13h (320x200, 256 Colors)
  */
 
-// --- Types & Hardware Constants ---
+#include "font.h"
 
-typedef unsigned char uint8_t;
-typedef unsigned short uint16_t;
-typedef unsigned int uint32_t;
+#define VGA_WIDTH 320
+#define VGA_HEIGHT 200
+#define VGA_ADDR ((volatile uint8_t *)0xA0000)
 
-#define VGA_WIDTH 80
-#define VGA_HEIGHT 25
-#define VGA_ADDR (uint8_t *)0xB8000
+// Colors
+#define COLOR_BLACK 0
+#define COLOR_BLUE 1
+#define COLOR_GREEN 2
+#define COLOR_CYAN 3
+#define COLOR_RED 4
+#define COLOR_MAGENTA 5
+#define COLOR_BROWN 6
+#define COLOR_LIGHT_GREY 7
+#define COLOR_DARK_GREY 8
+#define COLOR_LIGHT_BLUE 9
+#define COLOR_LIGHT_GREEN 10
+#define COLOR_LIGHT_CYAN 11
+#define COLOR_LIGHT_RED 12
+#define COLOR_LIGHT_MAGENTA 13
+#define COLOR_YELLOW 14
+#define COLOR_WHITE 15
 
-enum VgaColor {
-  COLOR_BLACK = 0,
-  COLOR_BLUE = 1,
-  COLOR_GREEN = 2,
-  COLOR_CYAN = 3,
-  COLOR_RED = 4,
-  COLOR_MAGENTA = 5,
-  COLOR_BROWN = 6,
-  COLOR_LIGHT_GREY = 7,
-  COLOR_DARK_GREY = 8,
-  COLOR_LIGHT_BLUE = 9,
-  COLOR_LIGHT_GREEN = 10,
-  COLOR_LIGHT_CYAN = 11,
-  COLOR_LIGHT_RED = 12,
-  COLOR_LIGHT_MAGENTA = 13,
-  COLOR_YELLOW = 14,
-  COLOR_WHITE = 15,
-};
-
-#define VGA_COLOR(fg, bg) ((bg << 4) | fg)
-
-// I/O Ports
+// Hardware Ports
 #define COM1_PORT 0x3f8
 #define KEYBOARD_STATUS_PORT 0x64
 #define KEYBOARD_DATA_PORT 0x60
 #define QEMU_SHUTDOWN_PORT 0x604
 #define VBOX_SHUTDOWN_PORT 0xB004
 
-// Keycodes
+// Keys
 #define KEY_ESC 0x01
 #define KEY_ENTER 0x1C
 #define KEY_UP 0x48
 #define KEY_DOWN 0x50
-
-// --- Low Level I/O ---
 
 static inline void outb(uint16_t port, uint8_t val) {
   asm volatile("outb %0, %1" : : "a"(val), "Nd"(port));
@@ -66,16 +54,15 @@ static inline uint8_t inb(uint16_t port) {
   return ret;
 }
 
-// --- Serial Debugging ---
-
+// Serial
 void serial_init() {
-  outb(COM1_PORT + 1, 0x00); // Disable interrupts
-  outb(COM1_PORT + 3, 0x80); // Enable DLAB (set baud rate divisor)
-  outb(COM1_PORT + 0, 0x03); // Set divisor to 3 (lo byte) 38400 baud
-  outb(COM1_PORT + 1, 0x00); //                  (hi byte)
-  outb(COM1_PORT + 3, 0x03); // 8 bits, no parity, one stop bit
-  outb(COM1_PORT + 2, 0xC7); // Enable FIFO, clear them, with 14-byte threshold
-  outb(COM1_PORT + 4, 0x0B); // IRQs enabled, RTS/DSR set
+  outb(COM1_PORT + 1, 0x00);
+  outb(COM1_PORT + 3, 0x80);
+  outb(COM1_PORT + 0, 0x03);
+  outb(COM1_PORT + 1, 0x00);
+  outb(COM1_PORT + 3, 0x03);
+  outb(COM1_PORT + 2, 0xC7);
+  outb(COM1_PORT + 4, 0x0B);
 }
 
 int serial_is_transmit_empty() { return inb(COM1_PORT + 5) & 0x20; }
@@ -92,8 +79,6 @@ void kprint_debug(const char *str) {
   }
 }
 
-// --- String Utils ---
-
 int kstrlen(const char *str) {
   int len = 0;
   while (str[len])
@@ -101,279 +86,284 @@ int kstrlen(const char *str) {
   return len;
 }
 
-int kstrcmp(const char *s1, const char *s2) {
-  while (*s1 && (*s1 == *s2)) {
-    s1++;
-    s2++;
-  }
-  return *(const unsigned char *)s1 - *(const unsigned char *)s2;
+// Graphics
+void put_pixel(int x, int y, uint8_t color) {
+  if (x < 0 || x >= VGA_WIDTH || y < 0 || y >= VGA_HEIGHT)
+    return;
+  VGA_ADDR[y * VGA_WIDTH + x] = color;
 }
 
-// --- VGA Driver ---
-
-void vga_clear(uint8_t color) {
-  uint8_t *vid_mem = VGA_ADDR;
-  for (int i = 0; i < VGA_WIDTH * VGA_HEIGHT; i++) {
-    vid_mem[i * 2] = ' ';
-    vid_mem[i * 2 + 1] = color;
+void draw_rect(int x, int y, int w, int h, uint8_t color) {
+  for (int i = 0; i < h; i++) {
+    for (int j = 0; j < w; j++) {
+      put_pixel(x + j, y + i, color);
+    }
   }
 }
 
-void vga_print_at(const char *str, int col, int row, uint8_t color) {
-  if (col >= VGA_WIDTH || row >= VGA_HEIGHT)
+void draw_line(int x1, int y1, int x2, int y2, uint8_t color) {
+  if (y1 == y2) {
+    for (int x = x1; x <= x2; x++)
+      put_pixel(x, y1, color);
+  } else if (x1 == x2) {
+    for (int y = y1; y <= y2; y++)
+      put_pixel(x1, y, color);
+  }
+}
+
+void draw_char(char c, int x, int y, uint8_t color) {
+  if (c == ' ')
     return;
 
-  uint8_t *vid_mem = VGA_ADDR + (row * VGA_WIDTH + col) * 2;
-  while (*str) {
-    if (col >= VGA_WIDTH)
-      break;
-    *vid_mem++ = *str++;
-    *vid_mem++ = color;
-    col++;
-  }
-}
+  const uint8_t(*font)[5] = 0;
+  int index = 0;
 
-void vga_print_centered(const char *str, int row, uint8_t color) {
-  int len = kstrlen(str);
-  int col = (VGA_WIDTH - len) / 2;
-  if (col < 0)
-    col = 0;
-  vga_print_at(str, col, row, color);
-}
-
-/*
- * Draws a window with a title bar and a drop shadow.
- * Uses standard ASCII box drawing characters.
- */
-void gui_draw_window(int x, int y, int w, int h, const char *title) {
-  uint8_t border_color = VGA_COLOR(COLOR_BLACK, COLOR_WHITE);
-  uint8_t content_color = VGA_COLOR(COLOR_BLACK, COLOR_WHITE);
-  uint8_t shadow_color = VGA_COLOR(COLOR_BLACK, COLOR_BLACK);
-
-  // Drop shadow
-  for (int i = 0; i < h; i++) {
-    for (int j = 0; j < w; j++) {
-      uint8_t *ptr = VGA_ADDR + ((y + 1 + i) * VGA_WIDTH + (x + 1 + j)) * 2;
-      *ptr++ = ' ';
-      *ptr++ = shadow_color;
-    }
+  if (c >= 'a' && c <= 'z') {
+    font = font_lower;
+    index = c - 'a';
+  } else if (c >= 'A' && c <= 'Z') {
+    font = font_alpha;
+    index = c - 'A';
+  } else if (c >= '0' && c <= '9') {
+    font = font_digits;
+    index = c - '0';
   }
 
-  // Window background
-  for (int i = 0; i < h; i++) {
-    for (int j = 0; j < w; j++) {
-      uint8_t *ptr = VGA_ADDR + ((y + i) * VGA_WIDTH + (x + j)) * 2;
-      *ptr++ = ' ';
-      *ptr++ = content_color;
-    }
-  }
-
-  // Borders
-  // Corners
-  uint8_t *ptr = VGA_ADDR + (y * VGA_WIDTH + x) * 2;
-  *ptr++ = 218;
-  *ptr++ = border_color; // Top-Left
-
-  ptr = VGA_ADDR + (y * VGA_WIDTH + (x + w - 1)) * 2;
-  *ptr++ = 191;
-  *ptr++ = border_color; // Top-Right
-
-  ptr = VGA_ADDR + ((y + h - 1) * VGA_WIDTH + x) * 2;
-  *ptr++ = 192;
-  *ptr++ = border_color; // Bottom-Left
-
-  ptr = VGA_ADDR + ((y + h - 1) * VGA_WIDTH + (x + w - 1)) * 2;
-  *ptr++ = 217;
-  *ptr++ = border_color; // Bottom-Right
-
-  // Edges
-  for (int i = 1; i < w - 1; i++) {
-    ptr = VGA_ADDR + (y * VGA_WIDTH + (x + i)) * 2;
-    *ptr++ = 196;
-    *ptr++ = border_color; // Top
-
-    ptr = VGA_ADDR + ((y + h - 1) * VGA_WIDTH + (x + i)) * 2;
-    *ptr++ = 196;
-    *ptr++ = border_color; // Bottom
-  }
-
-  for (int i = 1; i < h - 1; i++) {
-    ptr = VGA_ADDR + ((y + i) * VGA_WIDTH + x) * 2;
-    *ptr++ = 179;
-    *ptr++ = border_color; // Left
-
-    ptr = VGA_ADDR + ((y + i) * VGA_WIDTH + (x + w - 1)) * 2;
-    *ptr++ = 179;
-    *ptr++ = border_color; // Right
-  }
-
-  // Title bar
-  if (title) {
-    int title_len = kstrlen(title);
-    int title_start = x + (w - title_len) / 2;
-    vga_print_at(title, title_start, y + 1,
-                 VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
-
-    // Separator line
-    for (int i = 0; i < w; i++) {
-      ptr = VGA_ADDR + ((y + 2) * VGA_WIDTH + (x + i)) * 2;
-      if (i == 0) {
-        *ptr++ = 195;
-        *ptr++ = border_color; // Left T
-      } else if (i == w - 1) {
-        *ptr++ = 180;
-        *ptr++ = border_color; // Right T
-      } else {
-        *ptr++ = 196;
-        *ptr++ = border_color; // Horizontal
+  if (font) {
+    for (int i = 0; i < 5; i++) {
+      uint8_t col = font[index][i];
+      for (int j = 0; j < 8; j++) {
+        if (col & (1 << j)) {
+          put_pixel(x + i, y + j, color);
+        }
       }
     }
+    return;
+  }
+
+  // Symbols
+  if (c == '>') {
+    for (int i = 0; i < 5; i++) {
+      for (int j = 0; j <= i; j++) {
+        put_pixel(x + j, y + i, color);
+        put_pixel(x + j, y + 8 - i, color);
+      }
+    }
+  } else if (c == '-') {
+    for (int i = 0; i < 4; i++)
+      put_pixel(x + i, y + 3, color);
+  } else if (c == '.') {
+    put_pixel(x + 2, y + 6, color);
   }
 }
 
-// --- Keyboard Driver ---
+void draw_string(const char *str, int x, int y, uint8_t color) {
+  while (*str) {
+    draw_char(*str++, x, y, color);
+    x += 6;
+  }
+}
+
+void draw_string_centered(const char *str, int y, uint8_t color) {
+  int len = kstrlen(str);
+  int x = (VGA_WIDTH - (len * 6)) / 2;
+  draw_string(str, x, y, color);
+}
+
+// GUI
+void gui_draw_window(int x, int y, int w, int h, const char *title) {
+  uint8_t border = COLOR_BLACK;
+  uint8_t bg = COLOR_WHITE;
+
+  // Shadow
+  draw_rect(x + 2, y + 2, w, h, COLOR_BLACK);
+
+  // Window
+  draw_rect(x, y, w, h, bg);
+
+  // Border
+  draw_rect(x, y, w, 1, border);
+  draw_rect(x, y + h - 1, w, 1, border);
+  draw_rect(x, y, 1, h, border);
+  draw_rect(x + w - 1, y, 1, h, border);
+
+  if (title) {
+    int title_h = 12;
+    draw_line(x, y + title_h, x + w, y + title_h, border);
+
+    int text_len = kstrlen(title) * 6;
+    int text_x = x + (w - text_len) / 2;
+    draw_string(title, text_x, y + 3, border);
+  }
+}
 
 uint8_t keyboard_read_scancode() {
-  // Wait for buffer to be full
   while ((inb(KEYBOARD_STATUS_PORT) & 1) == 0)
     ;
   return inb(KEYBOARD_DATA_PORT);
 }
 
-// --- Main Kernel Logic ---
+// App
+enum AppState {
+  STATE_MENU = 0,
+  STATE_HELLO,
+  STATE_HELP,
+  STATE_ABOUT,
+  STATE_SETTINGS
+};
+const char *MENU_ITEMS[] = {"HELP", "HELLO", "ABOUT", "SETTINGS", "SHUTDOWN"};
+const int MENU_COUNT = 5;
 
-enum AppState { STATE_MENU = 0, STATE_HELLO, STATE_HELP, STATE_ABOUT };
+struct Color {
+  const char *name;
+  uint8_t value;
+};
 
-const char *MENU_ITEMS[] = {"HELP", "HELLO", "ABOUT", "SHUTDOWN"};
-const int MENU_COUNT = 4;
+const struct Color COLORS[] = {
+    {"WHITE", COLOR_WHITE},   {"BLUE", COLOR_BLUE},
+    {"GREEN", COLOR_GREEN},   {"CYAN", COLOR_CYAN},
+    {"RED", COLOR_RED},       {"MAGENTA", COLOR_MAGENTA},
+    {"BROWN", COLOR_BROWN},   {"L.GREY", COLOR_LIGHT_GREY},
+    {"YELLOW", COLOR_YELLOW}, {"L.BLUE", COLOR_LIGHT_BLUE}};
+const int COLOR_COUNT = 10;
+int current_bg_color = 0;
 
 void draw_menu_items(int x, int y, int selected) {
-  uint8_t color = VGA_COLOR(COLOR_BLACK, COLOR_WHITE);
-
   for (int i = 0; i < MENU_COUNT; i++) {
-    int item_y = y + i;
+    int item_y = y + (i * 10);
+    if (i == selected)
+      draw_string(">", x, item_y, COLOR_BLACK);
+    draw_string(MENU_ITEMS[i], x + 10, item_y, COLOR_BLACK);
+  }
+}
 
-    // Draw cursor
-    if (i == selected) {
-      vga_print_at(">", x, item_y, color);
-    } else {
-      vga_print_at(" ", x, item_y, color);
+void draw_settings_menu(int x, int y, int selected) {
+  for (int i = 0; i < COLOR_COUNT; i++) {
+    int item_y = y + (i * 10);
+
+    if (i == selected)
+      draw_string(">", x, item_y, COLOR_BLACK);
+
+    // Preview
+    draw_rect(x + 10, item_y, 8, 8, COLORS[i].value);
+    draw_rect(x + 10, item_y, 8, 1, COLOR_BLACK);
+    draw_rect(x + 10, item_y + 7, 8, 1, COLOR_BLACK);
+    draw_rect(x + 10, item_y, 1, 8, COLOR_BLACK);
+    draw_rect(x + 17, item_y, 1, 8, COLOR_BLACK);
+
+    draw_string(COLORS[i].name, x + 25, item_y, COLOR_BLACK);
+
+    if (i == current_bg_color) {
+      draw_string("*", x + 80, item_y, COLOR_BLACK);
     }
-
-    vga_print_at(MENU_ITEMS[i], x + 2, item_y, color);
   }
 }
 
 void kmain() {
   serial_init();
-  kprint_debug("Kernel started.\n");
+  kprint_debug("Kernel started\n");
 
   int state = STATE_MENU;
-  int selected_item = 0;
-  int dirty = 1;       // Needs redraw?
-  int full_redraw = 1; // Needs full background clear?
+  int selected = 0;
+  int settings_selected = 0;
+  int dirty = 1;
+  int full_redraw = 1;
 
   while (1) {
     if (dirty) {
       if (full_redraw) {
-        // Desktop background
-        vga_clear(VGA_COLOR(COLOR_WHITE, COLOR_CYAN));
+        uint8_t bg_col = COLORS[current_bg_color].value;
+        for (int y = 0; y < VGA_HEIGHT; y++) {
+          for (int x = 0; x < VGA_WIDTH; x++) {
+            put_pixel(x, y, (x + y) % 2 == 0 ? bg_col : COLOR_BLACK);
+          }
+        }
         full_redraw = 0;
       }
 
       if (state == STATE_MENU) {
-        int w = 30, h = 10;
+        int w = 100, h = 70;
         int x = (VGA_WIDTH - w) / 2;
         int y = (VGA_HEIGHT - h) / 2;
-
         gui_draw_window(x, y, w, h, "Start");
-        draw_menu_items(x + 4, y + 4, selected_item);
-
+        draw_menu_items(x + 10, y + 18, selected);
       } else if (state == STATE_HELLO) {
-        int w = 40, h = 12;
+        int w = 120, h = 50;
         int x = (VGA_WIDTH - w) / 2;
         int y = (VGA_HEIGHT - h) / 2;
-
-        gui_draw_window(x, y, w, h, "Hello");
-        vga_print_centered("HELLO WORLD", y + 5,
-                           VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
-        vga_print_centered("Press ESC to return", y + 8,
-                           VGA_COLOR(COLOR_DARK_GREY, COLOR_WHITE));
-
+        gui_draw_window(x, y, w, h, "HELLO");
+        draw_string_centered("HELLO WORLD", y + 20, COLOR_BLACK);
+        draw_string_centered("PRESS ESC", y + 35, COLOR_DARK_GREY);
       } else if (state == STATE_HELP) {
-        int w = 50, h = 15;
+        int w = 160, h = 60;
         int x = (VGA_WIDTH - w) / 2;
         int y = (VGA_HEIGHT - h) / 2;
-
-        gui_draw_window(x, y, w, h, "Help");
-
-        int text_y = y + 4;
-        vga_print_at("Use UP/DOWN arrows to navigate.", x + 4, text_y++,
-                     VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
-        vga_print_at("Press ENTER to select.", x + 4, text_y++,
-                     VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
-        vga_print_at("Press ESC to go back.", x + 4, text_y++,
-                     VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
-
+        gui_draw_window(x, y, w, h, "HELP");
+        draw_string("USE ARROWS TO MOVE", x + 10, y + 20, COLOR_BLACK);
+        draw_string("ENTER TO SELECT", x + 10, y + 30, COLOR_BLACK);
+        draw_string("ESC TO RETURN", x + 10, y + 40, COLOR_BLACK);
       } else if (state == STATE_ABOUT) {
-        int w = 40, h = 12;
+        int w = 120, h = 60;
         int x = (VGA_WIDTH - w) / 2;
         int y = (VGA_HEIGHT - h) / 2;
-
-        gui_draw_window(x, y, w, h, "About");
-
-        vga_print_centered("BaseOS Kernel", y + 4,
-                           VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
-        vga_print_centered("Version 0.1.0", y + 5,
-                           VGA_COLOR(COLOR_DARK_GREY, COLOR_WHITE));
-        vga_print_centered("(c) 2025 CCG", y + 7,
-                           VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
-        vga_print_centered("All Rights Reserved", y + 8,
-                           VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
+        gui_draw_window(x, y, w, h, "ABOUT");
+        draw_string_centered("BASEOS KERNEL", y + 20, COLOR_BLACK);
+        draw_string_centered("VER 0.1.0", y + 30, COLOR_DARK_GREY);
+        draw_string_centered("C 2025 CCG", y + 40, COLOR_BLACK);
+      } else if (state == STATE_SETTINGS) {
+        int w = 140, h = 130;
+        int x = (VGA_WIDTH - w) / 2;
+        int y = (VGA_HEIGHT - h) / 2;
+        gui_draw_window(x, y, w, h, "Settings");
+        draw_settings_menu(x + 10, y + 18, settings_selected);
       }
       dirty = 0;
     }
 
     uint8_t sc = keyboard_read_scancode();
-
-    // Ignore key release events (top bit set)
     if (sc & 0x80)
       continue;
 
     if (state == STATE_MENU) {
       if (sc == KEY_UP) {
-        selected_item--;
-        if (selected_item < 0)
-          selected_item = MENU_COUNT - 1;
+        selected = (selected - 1 + MENU_COUNT) % MENU_COUNT;
         dirty = 1;
       } else if (sc == KEY_DOWN) {
-        selected_item++;
-        if (selected_item >= MENU_COUNT)
-          selected_item = 0;
+        selected = (selected + 1) % MENU_COUNT;
         dirty = 1;
       } else if (sc == KEY_ENTER) {
-        if (selected_item == 0) { // HELP
-          state = STATE_HELP;
-          dirty = 1;
-          full_redraw = 1;
-        } else if (selected_item == 1) { // HELLO
-          state = STATE_HELLO;
-          dirty = 1;
-          full_redraw = 1;
-        } else if (selected_item == 2) { // ABOUT
-          state = STATE_ABOUT;
-          dirty = 1;
-          full_redraw = 1;
-        } else if (selected_item == 3) { // SHUTDOWN
-          // Try QEMU then Bochs/VirtualBox shutdown
+        if (selected == 4) {
           outw(QEMU_SHUTDOWN_PORT, 0x2000);
           outw(VBOX_SHUTDOWN_PORT, 0x2000);
-
-          // Fallback
-          vga_clear(COLOR_BLACK);
-          vga_print_centered("System Halted.", 12, COLOR_LIGHT_RED);
           asm volatile("hlt");
+        } else {
+          if (selected == 0)
+            state = STATE_HELP;
+          else if (selected == 1)
+            state = STATE_HELLO;
+          else if (selected == 2)
+            state = STATE_ABOUT;
+          else if (selected == 3)
+            state = STATE_SETTINGS;
+          dirty = 1;
+          full_redraw = 1;
         }
+      }
+    } else if (state == STATE_SETTINGS) {
+      if (sc == KEY_UP) {
+        settings_selected = (settings_selected - 1 + COLOR_COUNT) % COLOR_COUNT;
+        dirty = 1;
+      } else if (sc == KEY_DOWN) {
+        settings_selected = (settings_selected + 1) % COLOR_COUNT;
+        dirty = 1;
+      } else if (sc == KEY_ENTER) {
+        current_bg_color = settings_selected;
+        dirty = 1;
+        full_redraw = 1;
+      } else if (sc == KEY_ESC) {
+        state = STATE_MENU;
+        dirty = 1;
+        full_redraw = 1;
       }
     } else {
       if (sc == KEY_ESC) {
