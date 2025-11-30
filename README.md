@@ -2,7 +2,7 @@
 
 A tiny 32-bit kernel I'm writing from scratch in C and Assembly. It boots into a custom VGA GUI (Mode 13h) with a few basic apps.
 
-![BaseOS Demo](screenshots/demo.png)
+![BaseOS Demo](https://raw.githubusercontent.com/celento/BaseOS/refs/heads/master/screenshots/demo.png)
 
 ## What is this?
 
