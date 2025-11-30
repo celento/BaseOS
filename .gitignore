@@ -1,0 +1,18 @@
+# Build Artifacts
+*.bin
+*.o
+*.elf
+*.img
+*.tmp
+
+# Logs and Debugging
+serial.out
+qemu.log
+qemu_log.txt
+
+# System
+.DS_Store
+
+# Editor
+.vscode/
+*.swp
