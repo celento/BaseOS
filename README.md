@@ -2,6 +2,8 @@
 
 A simple 32-bit x86 kernel written in C and Assembly.
 
+![BaseOS Demo](screenshots/demo.png)
+
 I started this project to learn more about low-level systems programming and how operating systems work under the hood. It's currently a work in progress but boots into a simple GUI-like menu system.
 
 ## Features

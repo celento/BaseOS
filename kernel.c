@@ -242,10 +242,10 @@ uint8_t keyboard_read_scancode() {
 
 // --- Main Kernel Logic ---
 
-enum AppState { STATE_MENU = 0, STATE_HELLO, STATE_HELP };
+enum AppState { STATE_MENU = 0, STATE_HELLO, STATE_HELP, STATE_ABOUT };
 
-const char *MENU_ITEMS[] = {"HELP", "HELLO", "SHUTDOWN"};
-const int MENU_COUNT = 3;
+const char *MENU_ITEMS[] = {"HELP", "HELLO", "ABOUT", "SHUTDOWN"};
+const int MENU_COUNT = 4;
 
 void draw_menu_items(int x, int y, int selected) {
   uint8_t color = VGA_COLOR(COLOR_BLACK, COLOR_WHITE);
@@ -314,6 +314,22 @@ void kmain() {
                      VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
         vga_print_at("Press ESC to go back.", x + 4, text_y++,
                      VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
+
+      } else if (state == STATE_ABOUT) {
+        int w = 40, h = 12;
+        int x = (VGA_WIDTH - w) / 2;
+        int y = (VGA_HEIGHT - h) / 2;
+
+        gui_draw_window(x, y, w, h, "About");
+
+        vga_print_centered("BaseOS Kernel", y + 4,
+                           VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
+        vga_print_centered("Version 0.1.0", y + 5,
+                           VGA_COLOR(COLOR_DARK_GREY, COLOR_WHITE));
+        vga_print_centered("(c) 2025 CCG", y + 7,
+                           VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
+        vga_print_centered("All Rights Reserved", y + 8,
+                           VGA_COLOR(COLOR_BLACK, COLOR_WHITE));
       }
       dirty = 0;
     }
@@ -344,7 +360,11 @@ void kmain() {
           state = STATE_HELLO;
           dirty = 1;
           full_redraw = 1;
-        } else if (selected_item == 2) { // SHUTDOWN
+        } else if (selected_item == 2) { // ABOUT
+          state = STATE_ABOUT;
+          dirty = 1;
+          full_redraw = 1;
+        } else if (selected_item == 3) { // SHUTDOWN
           // Try QEMU then Bochs/VirtualBox shutdown
           outw(QEMU_SHUTDOWN_PORT, 0x2000);
           outw(VBOX_SHUTDOWN_PORT, 0x2000);
